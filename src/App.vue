@@ -9,10 +9,38 @@ const messageType = ref('info')
 const activeTab = ref('users')
 const showUserForm = ref(false)
 
+// Types
+interface User {
+  id: number
+  first_name: string
+  last_name: string
+  username: string
+  pin: string
+  is_active_user: boolean
+}
+
+interface AccessLog {
+  id: number
+  user_name: string
+  access_time: string
+  ip_address?: string
+  success: boolean
+}
+
+interface SystemStatus {
+  total_users: number
+  recent_accesses: number
+  system_status: string
+}
+
 // Data
-const users = ref([])
-const accessLogs = ref([])
-const systemStatus = ref({})
+const users = ref<User[]>([])
+const accessLogs = ref<AccessLog[]>([])
+const systemStatus = ref<SystemStatus>({
+  total_users: 0,
+  recent_accesses: 0,
+  system_status: 'offline'
+})
 const config = ref({
   admin_pin: '8729',
   door_open_duration: 5
