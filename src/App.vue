@@ -3,7 +3,10 @@ import { ref, onMounted, computed } from 'vue'
 
 // State
 const isLoggedIn = ref(false)
-const currentPin = ref('')
+const loginForm = ref({
+  username: '',
+  password: ''
+})
 const message = ref('')
 const messageType = ref('info')
 const activeTab = ref('users')
@@ -53,15 +56,7 @@ const newUser = ref({
   password: ''
 })
 
-// Keypad layout
-const keypadLayout = [
-  ['1', '2', '3'],
-  ['4', '5', '6'],
-  ['7', '8', '9'],
-  ['*', '0', '#']
-]
-
-const API_BASE_URL = 'http://localhost:8000/api'
+const API_BASE_URL = 'http://10.102.0.108:8191/api'
 
 // Methods
 const showMessage = (msg: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -72,16 +67,50 @@ const showMessage = (msg: string, type: 'success' | 'error' | 'info' = 'info') =
   }, 5000)
 }
 
-const handleKeyPress = (key: string) => {
-  if (key === '*') {
-    if (currentPin.value.length === 4) {
-      login()
+// Verificar se está logado ao carregar a página
+const checkAuthStatus = async () => {
+  try {
+    // Primeiro verificar localStorage
+    const savedLogin = localStorage.getItem('isLoggedIn')
+    const savedUserType = localStorage.getItem('userType')
+    
+    if (savedLogin === 'true' && savedUserType) {
+      // Verificar com o servidor se ainda está válido
+      const response = await fetch(`${API_BASE_URL}/check-auth/`)
+      const data = await response.json()
+      
+      if (data.success) {
+        isLoggedIn.value = true
+        loadData()
+        return true
+      } else {
+        // Token inválido, limpar localStorage
+        localStorage.removeItem('isLoggedIn')
+        localStorage.removeItem('userType')
+        isLoggedIn.value = false
+        return false
+      }
+    } else {
+      isLoggedIn.value = false
+      return false
     }
-  } else if (key === '#') {
-    currentPin.value = ''
-  } else if (currentPin.value.length < 4) {
-    currentPin.value += key
+  } catch (error) {
+    console.error('Erro ao verificar autenticação:', error)
+    // Em caso de erro, limpar localStorage e ir para login
+    localStorage.removeItem('isLoggedIn')
+    localStorage.removeItem('userType')
+    isLoggedIn.value = false
+    return false
   }
+}
+
+const handleLogin = async () => {
+  if (!loginForm.value.username || !loginForm.value.password) {
+    showMessage('Usuário e senha são obrigatórios', 'error')
+    return
+  }
+  
+  await login()
 }
 
 const login = async () => {
@@ -91,29 +120,45 @@ const login = async () => {
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ pin: currentPin.value })
+      body: JSON.stringify({
+        username: loginForm.value.username,
+        password: loginForm.value.password
+      })
     })
     
     const data = await response.json()
     
     if (data.success) {
       isLoggedIn.value = true
-      currentPin.value = ''
+      
+      // Salvar no localStorage
+      localStorage.setItem('isLoggedIn', 'true')
+      localStorage.setItem('userType', data.user_type || 'user')
+      localStorage.setItem('username', loginForm.value.username)
+      
+      loginForm.value = { username: '', password: '' }
       showMessage('Login realizado com sucesso!', 'success')
       loadData()
     } else {
       showMessage(data.message, 'error')
-      currentPin.value = ''
+      loginForm.value.password = ''
     }
   } catch (error) {
     showMessage('Erro de conexão', 'error')
-    currentPin.value = ''
+    loginForm.value.password = ''
   }
 }
 
 const logout = () => {
   isLoggedIn.value = false
-  currentPin.value = ''
+  loginForm.value = { username: '', password: '' }
+  
+  // Limpar localStorage
+  localStorage.removeItem('isLoggedIn')
+  localStorage.removeItem('userType')
+  localStorage.removeItem('username')
+  
+  showMessage('Logout realizado com sucesso!', 'success')
 }
 
 const loadData = async () => {
@@ -127,7 +172,7 @@ const loadData = async () => {
     accessLogs.value = await logsResponse.json()
     
     // Carregar status
-    const statusResponse = await fetch(`${API_BASE_URL}/status/`)
+    const statusResponse = await fetch(`${API_BASE_URL}/system-status/`)
     systemStatus.value = await statusResponse.json()
   } catch (error) {
     console.error('Erro ao carregar dados:', error)
@@ -158,7 +203,33 @@ const createUser = async () => {
       }
       loadData()
     } else {
-      showMessage('Erro ao criar usuário', 'error')
+      showMessage(data.message || 'Erro ao criar usuário', 'error')
+    }
+  } catch (error) {
+    showMessage('Erro de conexão', 'error')
+  }
+}
+
+const deleteUser = async (userId: number) => {
+  if (!confirm('Tem certeza que deseja excluir este usuário?')) {
+    return
+  }
+  
+  try {
+    const response = await fetch(`${API_BASE_URL}/users/${userId}/delete/`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    })
+    
+    const data = await response.json()
+    
+    if (data.success) {
+      showMessage('Usuário excluído com sucesso!', 'success')
+      loadData()
+    } else {
+      showMessage(data.message || 'Erro ao excluir usuário', 'error')
     }
   } catch (error) {
     showMessage('Erro de conexão', 'error')
@@ -173,10 +244,9 @@ const formatDate = (dateString: string) => {
   return new Date(dateString).toLocaleString('pt-BR')
 }
 
-onMounted(() => {
-  // Auto-login para desenvolvimento
-  // isLoggedIn.value = true
-  // loadData()
+onMounted(async () => {
+  // Verificar se está logado ao carregar a página
+  await checkAuthStatus()
 })
 </script>
 
@@ -186,28 +256,32 @@ onMounted(() => {
     <div v-if="!isLoggedIn" class="login-container">
       <div class="login-card">
         <h1>🔐 Controle de Acesso</h1>
-        <p>Digite o PIN do administrador</p>
+        <p>Faça login com usuário e senha</p>
         
-        <div class="pin-input">
-          <div class="pin-display">
-            <span v-for="(digit, index) in 4" :key="index" class="pin-dot">
-              {{ currentPin[index] || '•' }}
-            </span>
+        <div class="login-form">
+          <div class="form-group">
+            <label>Usuário:</label>
+            <input 
+              v-model="loginForm.username" 
+              type="text" 
+              placeholder="Digite seu usuário"
+              @keyup.enter="handleLogin"
+            />
           </div>
           
-          <div class="keypad">
-            <div class="keypad-row" v-for="row in keypadLayout" :key="row.join('')">
-              <button 
-                v-for="key in row" 
-                :key="key"
-                @click="handleKeyPress(key)"
-                class="keypad-btn"
-                :class="{ 'function-key': key === '*' || key === '#' }"
-              >
-                {{ key }}
-              </button>
-            </div>
+          <div class="form-group">
+            <label>Senha:</label>
+            <input 
+              v-model="loginForm.password" 
+              type="password" 
+              placeholder="Digite sua senha"
+              @keyup.enter="handleLogin"
+            />
           </div>
+          
+          <button @click="handleLogin" class="login-btn">
+            Entrar
+          </button>
         </div>
         
         <div class="message" v-if="message">
@@ -288,8 +362,17 @@ onMounted(() => {
                 <p>PIN: {{ user.pin }}</p>
                 <p>Usuário: {{ user.username }}</p>
               </div>
-              <div class="user-status" :class="{ active: user.is_active_user }">
-                {{ user.is_active_user ? 'Ativo' : 'Inativo' }}
+              <div class="user-actions">
+                <div class="user-status" :class="{ active: user.is_active_user }">
+                  {{ user.is_active_user ? 'Ativo' : 'Inativo' }}
+                </div>
+                <button 
+                  @click="deleteUser(user.id)" 
+                  class="delete-btn"
+                  title="Excluir usuário"
+                >
+                  🗑️
+                </button>
               </div>
             </div>
           </div>
@@ -409,63 +492,51 @@ onMounted(() => {
   margin-bottom: 2rem;
 }
 
-.pin-input {
+.login-form {
   margin-bottom: 2rem;
 }
 
-.pin-display {
-  display: flex;
-  justify-content: center;
-  gap: 1rem;
-  margin-bottom: 2rem;
+.login-form .form-group {
+  margin-bottom: 1.5rem;
+  text-align: left;
 }
 
-.pin-dot {
-  width: 40px;
-  height: 40px;
-  border: 2px solid #ddd;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.2rem;
-  font-weight: bold;
+.login-form label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-weight: 500;
   color: #333;
 }
 
-.keypad {
-  display: grid;
-  gap: 0.5rem;
+.login-form input {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 1rem;
+  box-sizing: border-box;
 }
 
-.keypad-row {
-  display: flex;
-  gap: 0.5rem;
+.login-form input:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
 }
 
-.keypad-btn {
-  width: 60px;
-  height: 60px;
-  border: none;
-  border-radius: 12px;
-  background: #f8f9fa;
-  font-size: 1.5rem;
-  font-weight: bold;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.keypad-btn:hover {
-  background: #e9ecef;
-  transform: scale(1.05);
-}
-
-.keypad-btn.function-key {
+.login-btn {
+  width: 100%;
   background: #007bff;
   color: white;
+  border: none;
+  padding: 0.75rem;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
 }
 
-.keypad-btn.function-key:hover {
+.login-btn:hover {
   background: #0056b3;
 }
 
@@ -605,6 +676,12 @@ onMounted(() => {
   background: #d4edda;
 }
 
+.user-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
 .user-status {
   padding: 0.25rem 0.75rem;
   border-radius: 4px;
@@ -615,6 +692,21 @@ onMounted(() => {
 .user-status.active {
   background: #28a745;
   color: white;
+}
+
+.delete-btn {
+  background: #dc3545;
+  color: white;
+  border: none;
+  padding: 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+  transition: background-color 0.2s;
+}
+
+.delete-btn:hover {
+  background: #c82333;
 }
 
 .log-status {
