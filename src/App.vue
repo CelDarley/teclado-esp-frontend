@@ -9,10 +9,19 @@ const loginForm = ref({
 })
 const message = ref('')
 const messageType = ref('info')
-const activeTab = ref('users')
+const activeTab = ref('devices')
 const showUserForm = ref(false)
+const showDeviceForm = ref(false)
+const selectedDevice = ref<Device | null>(null)
 
 // Types
+interface Device {
+  id: number
+  name: string
+  ip_address: string
+  is_active: boolean
+}
+
 interface User {
   id: number
   first_name: string
@@ -20,6 +29,7 @@ interface User {
   username: string
   pin: string
   is_active_user: boolean
+  device: number
 }
 
 interface AccessLog {
@@ -28,6 +38,7 @@ interface AccessLog {
   access_time: string
   ip_address?: string
   success: boolean
+  device: number
 }
 
 interface SystemStatus {
@@ -37,6 +48,7 @@ interface SystemStatus {
 }
 
 // Data
+const devices = ref<Device[]>([])
 const users = ref<User[]>([])
 const accessLogs = ref<AccessLog[]>([])
 const systemStatus = ref<SystemStatus>({
@@ -54,6 +66,10 @@ const newUser = ref({
   username: '',
   pin: '',
   password: ''
+})
+const newDevice = ref({
+  name: '',
+  ip_address: ''
 })
 
 const API_BASE_URL = 'http://10.102.0.108:8191/api'
@@ -81,7 +97,8 @@ const checkAuthStatus = async () => {
       
       if (data.success) {
         isLoggedIn.value = true
-        loadData()
+        selectedDevice.value = null  // Reset selected device
+        loadDevices()
         return true
       } else {
         // Token inválido, limpar localStorage
@@ -130,6 +147,7 @@ const login = async () => {
     
     if (data.success) {
       isLoggedIn.value = true
+      selectedDevice.value = null  // Reset selected device
       
       // Salvar no localStorage
       localStorage.setItem('isLoggedIn', 'true')
@@ -138,7 +156,7 @@ const login = async () => {
       
       loginForm.value = { username: '', password: '' }
       showMessage('Login realizado com sucesso!', 'success')
-      loadData()
+      loadDevices()
     } else {
       showMessage(data.message, 'error')
       loginForm.value.password = ''
@@ -152,6 +170,7 @@ const login = async () => {
 const logout = () => {
   isLoggedIn.value = false
   loginForm.value = { username: '', password: '' }
+  selectedDevice.value = null
   
   // Limpar localStorage
   localStorage.removeItem('isLoggedIn')
@@ -161,32 +180,125 @@ const logout = () => {
   showMessage('Logout realizado com sucesso!', 'success')
 }
 
-const loadData = async () => {
+const backToDevices = () => {
+  selectedDevice.value = null
+  activeTab.value = 'devices'
+  showMessage('Voltando para lista de dispositivos', 'info')
+}
+
+const loadDevices = async () => {
   try {
-    // Carregar usuários
-    const usersResponse = await fetch(`${API_BASE_URL}/users/`)
+    const response = await fetch(`${API_BASE_URL}/devices/`)
+    devices.value = await response.json()
+  } catch (error) {
+    console.error('Erro ao carregar dispositivos:', error)
+    showMessage('Erro ao carregar dispositivos', 'error')
+  }
+}
+
+const selectDevice = async (device: Device) => {
+  selectedDevice.value = device
+  activeTab.value = 'users'
+  await loadData()
+}
+
+const loadData = async () => {
+  if (!selectedDevice.value) return
+  
+  try {
+    // Carregar usuários do dispositivo selecionado
+    const usersResponse = await fetch(`${API_BASE_URL}/users/?device_id=${selectedDevice.value.id}`)
     users.value = await usersResponse.json()
     
-    // Carregar logs
-    const logsResponse = await fetch(`${API_BASE_URL}/logs/`)
+    // Carregar logs do dispositivo selecionado
+    const logsResponse = await fetch(`${API_BASE_URL}/logs/?device_id=${selectedDevice.value.id}`)
     accessLogs.value = await logsResponse.json()
     
-    // Carregar status
+    // Carregar status (por enquanto mantém o mesmo)
     const statusResponse = await fetch(`${API_BASE_URL}/system-status/`)
     systemStatus.value = await statusResponse.json()
   } catch (error) {
     console.error('Erro ao carregar dados:', error)
+    showMessage('Erro ao carregar dados do dispositivo', 'error')
+  }
+}
+
+const createDevice = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/devices/create/`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(newDevice.value)
+    })
+    
+    const data = await response.json()
+    
+    if (data.success) {
+      showMessage('Dispositivo criado com sucesso!', 'success')
+      showDeviceForm.value = false
+      newDevice.value = {
+        name: '',
+        ip_address: ''
+      }
+      loadDevices()
+    } else {
+      showMessage(data.message || 'Erro ao criar dispositivo', 'error')
+    }
+  } catch (error) {
+    showMessage('Erro de conexão', 'error')
+  }
+}
+
+const deleteDevice = async (deviceId: number) => {
+  if (!confirm('Tem certeza que deseja excluir este dispositivo? Todos os usuários e logs associados serão perdidos.')) {
+    return
+  }
+  
+  try {
+    const response = await fetch(`${API_BASE_URL}/devices/${deviceId}/delete/`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    })
+    
+    const data = await response.json()
+    
+    if (data.success) {
+      showMessage('Dispositivo excluído com sucesso!', 'success')
+      if (selectedDevice.value?.id === deviceId) {
+        selectedDevice.value = null
+        activeTab.value = 'devices'
+      }
+      loadDevices()
+    } else {
+      showMessage(data.message || 'Erro ao excluir dispositivo', 'error')
+    }
+  } catch (error) {
+    showMessage('Erro de conexão', 'error')
   }
 }
 
 const createUser = async () => {
+  if (!selectedDevice.value) {
+    showMessage('Selecione um dispositivo primeiro', 'error')
+    return
+  }
+  
   try {
+    const userData = {
+      ...newUser.value,
+      device: selectedDevice.value.id
+    }
+    
     const response = await fetch(`${API_BASE_URL}/users/create/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(newUser.value)
+      body: JSON.stringify(userData)
     })
     
     const data = await response.json()
@@ -297,117 +409,183 @@ onMounted(async () => {
       <header class="dashboard-header">
         <h1>🏢 Sistema de Controle de Acesso</h1>
         <div class="user-info">
+          <span v-if="selectedDevice">Dispositivo: {{ selectedDevice.name }}</span>
           <span>Administrador</span>
+          <button v-if="selectedDevice" @click="backToDevices" class="back-btn">← Voltar aos Dispositivos</button>
           <button @click="logout" class="logout-btn">Sair</button>
         </div>
       </header>
 
       <main class="dashboard-main">
-        <!-- Status Cards -->
-        <div class="status-grid">
-          <div class="status-card">
-            <h3>👥 Usuários Ativos</h3>
-            <div class="status-value">{{ systemStatus.total_users || 0 }}</div>
-          </div>
-          
-          <div class="status-card">
-            <h3>📊 Acessos Hoje</h3>
-            <div class="status-value">{{ systemStatus.recent_accesses || 0 }}</div>
-          </div>
-          
-          <div class="status-card">
-            <h3>🔧 Status Sistema</h3>
-            <div class="status-value" :class="{ 'online': systemStatus.system_status === 'online' }">
-              {{ systemStatus.system_status === 'online' ? '🟢 Online' : '🔴 Offline' }}
+        <!-- Device Selection -->
+        <div v-if="!selectedDevice" class="device-selection">
+          <h2>Selecione um Dispositivo</h2>
+          <div class="devices-grid">
+            <div v-for="device in devices" :key="device.id" class="device-card" @click="selectDevice(device)">
+              <h3>{{ device.name }}</h3>
+              <p>IP: {{ device.ip_address }}</p>
+              <div class="device-status" :class="{ active: device.is_active }">
+                {{ device.is_active ? '🟢 Ativo' : '🔴 Inativo' }}
+              </div>
+            </div>
+            <div class="device-card add-device" @click="showDeviceForm = true">
+              <h3>+ Novo Dispositivo</h3>
+              <p>Adicionar novo dispositivo</p>
             </div>
           </div>
         </div>
 
-        <!-- Navigation Tabs -->
-        <div class="nav-tabs">
-          <button 
-            @click="activeTab = 'users'"
-            :class="{ active: activeTab === 'users' }"
-            class="tab-btn"
-          >
-            👥 Usuários
-          </button>
-          <button 
-            @click="activeTab = 'logs'"
-            :class="{ active: activeTab === 'logs' }"
-            class="tab-btn"
-          >
-            📋 Histórico
-          </button>
-          <button 
-            @click="activeTab = 'config'"
-            :class="{ active: activeTab === 'config' }"
-            class="tab-btn"
-          >
-            ⚙️ Configurações
-          </button>
-        </div>
-
-        <!-- Users Tab -->
-        <div v-if="activeTab === 'users'" class="tab-content">
-          <div class="section-header">
-            <h2>Gestão de Usuários</h2>
-            <button @click="showUserForm = true" class="add-btn">+ Novo Usuário</button>
-          </div>
-          
-          <div class="users-list">
-            <div v-for="user in users" :key="user.id" class="user-card">
-              <div class="user-info">
-                <h4>{{ user.first_name }} {{ user.last_name }}</h4>
-                <p>PIN: {{ user.pin }}</p>
-                <p>Usuário: {{ user.username }}</p>
+        <!-- Device Management -->
+        <div v-else>
+          <!-- Status Cards -->
+          <div class="status-grid">
+            <div class="status-card">
+              <h3>👥 Usuários Ativos</h3>
+              <div class="status-value">{{ systemStatus.total_users || 0 }}</div>
+            </div>
+            
+            <div class="status-card">
+              <h3>📊 Acessos Hoje</h3>
+              <div class="status-value">{{ systemStatus.recent_accesses || 0 }}</div>
+            </div>
+            
+            <div class="status-card">
+              <h3>🔧 Status Sistema</h3>
+              <div class="status-value" :class="{ 'online': systemStatus.system_status === 'online' }">
+                {{ systemStatus.system_status === 'online' ? '🟢 Online' : '🔴 Offline' }}
               </div>
-              <div class="user-actions">
-                <div class="user-status" :class="{ active: user.is_active_user }">
-                  {{ user.is_active_user ? 'Ativo' : 'Inativo' }}
+            </div>
+          </div>
+
+          <!-- Navigation Tabs -->
+          <div class="nav-tabs">
+            <button 
+              @click="activeTab = 'users'"
+              :class="{ active: activeTab === 'users' }"
+              class="tab-btn"
+            >
+              👥 Usuários
+            </button>
+            <button 
+              @click="activeTab = 'logs'"
+              :class="{ active: activeTab === 'logs' }"
+              class="tab-btn"
+            >
+              📋 Histórico
+            </button>
+            <button 
+              @click="activeTab = 'config'"
+              :class="{ active: activeTab === 'config' }"
+              class="tab-btn"
+            >
+              ⚙️ Configurações
+            </button>
+            <button 
+              @click="activeTab = 'devices'"
+              :class="{ active: activeTab === 'devices' }"
+              class="tab-btn"
+            >
+              🖥️ Dispositivos
+            </button>
+          </div>
+
+          <!-- Users Tab -->
+          <div v-if="activeTab === 'users'" class="tab-content">
+            <div class="section-header">
+              <h2>Gestão de Usuários - {{ selectedDevice?.name }}</h2>
+              <button @click="showUserForm = true" class="add-btn">+ Novo Usuário</button>
+            </div>
+            
+            <div class="users-list">
+              <div v-for="user in users" :key="user.id" class="user-card">
+                <div class="user-info">
+                  <h4>{{ user.first_name }} {{ user.last_name }}</h4>
+                  <p>PIN: {{ user.pin }}</p>
+                  <p>Usuário: {{ user.username }}</p>
                 </div>
-                <button 
-                  @click="deleteUser(user.id)" 
-                  class="delete-btn"
-                  title="Excluir usuário"
-                >
-                  🗑️
-                </button>
+                <div class="user-actions">
+                  <div class="user-status" :class="{ active: user.is_active_user }">
+                    {{ user.is_active_user ? 'Ativo' : 'Inativo' }}
+                  </div>
+                  <button 
+                    @click="deleteUser(user.id)" 
+                    class="delete-btn"
+                    title="Excluir usuário"
+                  >
+                    🗑️
+                  </button>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- Logs Tab -->
-        <div v-if="activeTab === 'logs'" class="tab-content">
-          <h2>Histórico de Acessos</h2>
-          <div class="logs-list">
-            <div v-for="log in accessLogs" :key="log.id" class="log-card" :class="{ success: log.success }">
-              <div class="log-info">
-                <h4>{{ log.user_name || 'Usuário Desconhecido' }}</h4>
-                <p>{{ formatDate(log.access_time) }}</p>
-                <p v-if="log.ip_address">IP: {{ log.ip_address }}</p>
-              </div>
-              <div class="log-status">
-                {{ log.success ? '✅ Acesso' : '❌ Negado' }}
+          <!-- Logs Tab -->
+          <div v-if="activeTab === 'logs'" class="tab-content">
+            <h2>Histórico de Acessos - {{ selectedDevice?.name }}</h2>
+            <div class="logs-list">
+              <div v-for="log in accessLogs" :key="log.id" class="log-card" :class="{ success: log.success }">
+                <div class="log-info">
+                  <h4>{{ log.user_name || 'Usuário Desconhecido' }}</h4>
+                  <p>{{ formatDate(log.access_time) }}</p>
+                  <p v-if="log.ip_address">IP: {{ log.ip_address }}</p>
+                </div>
+                <div class="log-status">
+                  {{ log.success ? '✅ Acesso' : '❌ Negado' }}
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- Config Tab -->
-        <div v-if="activeTab === 'config'" class="tab-content">
-          <h2>Configurações do Sistema</h2>
-          <div class="config-form">
-            <div class="form-group">
-              <label>PIN do Administrador:</label>
-              <input v-model="config.admin_pin" type="text" maxlength="4" pattern="[0-9]{4}" />
+          <!-- Config Tab -->
+          <div v-if="activeTab === 'config'" class="tab-content">
+            <h2>Configurações do Sistema - {{ selectedDevice?.name }}</h2>
+            <div class="config-form">
+              <div class="form-group">
+                <label>PIN do Administrador:</label>
+                <input v-model="config.admin_pin" type="text" maxlength="4" pattern="[0-9]{4}" />
+              </div>
+              <div class="form-group">
+                <label>Duração da Abertura (segundos):</label>
+                <input v-model="config.door_open_duration" type="number" min="1" max="30" />
+              </div>
+              <button @click="saveConfig" class="save-btn">Salvar Configurações</button>
             </div>
-            <div class="form-group">
-              <label>Duração da Abertura (segundos):</label>
-              <input v-model="config.door_open_duration" type="number" min="1" max="30" />
+          </div>
+
+          <!-- Devices Tab -->
+          <div v-if="activeTab === 'devices'" class="tab-content">
+            <div class="section-header">
+              <h2>Gestão de Dispositivos</h2>
+              <button @click="showDeviceForm = true" class="add-btn">+ Novo Dispositivo</button>
             </div>
-            <button @click="saveConfig" class="save-btn">Salvar Configurações</button>
+            
+            <div class="devices-list">
+              <div v-for="device in devices" :key="device.id" class="device-item">
+                <div class="device-info">
+                  <h4>{{ device.name }}</h4>
+                  <p>IP: {{ device.ip_address }}</p>
+                  <div class="device-status" :class="{ active: device.is_active }">
+                    {{ device.is_active ? '🟢 Ativo' : '🔴 Inativo' }}
+                  </div>
+                </div>
+                <div class="device-actions">
+                  <button 
+                    @click="selectDevice(device)" 
+                    class="select-btn"
+                    :class="{ active: selectedDevice?.id === device.id }"
+                  >
+                    {{ selectedDevice?.id === device.id ? 'Selecionado' : 'Selecionar' }}
+                  </button>
+                  <button 
+                    @click="deleteDevice(device.id)" 
+                    class="delete-btn"
+                    title="Excluir dispositivo"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </main>
@@ -415,7 +593,7 @@ onMounted(async () => {
       <!-- User Form Modal -->
       <div v-if="showUserForm" class="modal-overlay" @click="showUserForm = false">
         <div class="modal" @click.stop>
-          <h3>Novo Usuário</h3>
+          <h3>Novo Usuário - {{ selectedDevice?.name }}</h3>
           <form @submit.prevent="createUser">
             <div class="form-group">
               <label>Nome:</label>
@@ -440,6 +618,27 @@ onMounted(async () => {
             <div class="form-actions">
               <button type="button" @click="showUserForm = false" class="cancel-btn">Cancelar</button>
               <button type="submit" class="submit-btn">Criar Usuário</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- Device Form Modal -->
+      <div v-if="showDeviceForm" class="modal-overlay" @click="showDeviceForm = false">
+        <div class="modal" @click.stop>
+          <h3>Novo Dispositivo</h3>
+          <form @submit.prevent="createDevice">
+            <div class="form-group">
+              <label>Nome do Dispositivo:</label>
+              <input v-model="newDevice.name" type="text" required />
+            </div>
+            <div class="form-group">
+              <label>Endereço IP:</label>
+              <input v-model="newDevice.ip_address" type="text" required placeholder="192.168.1.100" />
+            </div>
+            <div class="form-actions">
+              <button type="button" @click="showDeviceForm = false" class="cancel-btn">Cancelar</button>
+              <button type="submit" class="submit-btn">Criar Dispositivo</button>
             </div>
           </form>
         </div>
@@ -567,6 +766,20 @@ onMounted(async () => {
   gap: 1rem;
 }
 
+.back-btn {
+  background: #6c757d;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-right: 1rem;
+}
+
+.back-btn:hover {
+  background: #5a6268;
+}
+
 .logout-btn {
   background: #dc3545;
   color: white;
@@ -582,6 +795,74 @@ onMounted(async () => {
   margin: 0 auto;
 }
 
+/* Device Selection */
+.device-selection {
+  text-align: center;
+  padding: 2rem;
+}
+
+.device-selection h2 {
+  margin-bottom: 2rem;
+  color: #333;
+}
+
+.devices-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.device-card {
+  background: white;
+  padding: 2rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 2px solid transparent;
+}
+
+.device-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+  border-color: #007bff;
+}
+
+.device-card h3 {
+  margin: 0 0 1rem 0;
+  color: #333;
+}
+
+.device-card p {
+  color: #666;
+  margin-bottom: 1rem;
+}
+
+.device-status {
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  font-weight: 500;
+  display: inline-block;
+}
+
+.device-status.active {
+  background: #d4edda;
+  color: #155724;
+}
+
+.device-card.add-device {
+  border: 2px dashed #007bff;
+  background: #f8f9fa;
+  color: #007bff;
+}
+
+.device-card.add-device:hover {
+  background: #e3f2fd;
+}
+
+/* Status Grid */
 .status-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -612,10 +893,12 @@ onMounted(async () => {
   color: #28a745;
 }
 
+/* Navigation Tabs */
 .nav-tabs {
   display: flex;
   gap: 0.5rem;
   margin-bottom: 2rem;
+  flex-wrap: wrap;
 }
 
 .tab-btn {
@@ -656,12 +939,13 @@ onMounted(async () => {
   cursor: pointer;
 }
 
-.users-list, .logs-list {
+/* Lists */
+.users-list, .logs-list, .devices-list {
   display: grid;
   gap: 1rem;
 }
 
-.user-card, .log-card {
+.user-card, .log-card, .device-item {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -676,7 +960,7 @@ onMounted(async () => {
   background: #d4edda;
 }
 
-.user-actions {
+.user-actions, .device-actions {
   display: flex;
   align-items: center;
   gap: 1rem;
@@ -692,6 +976,20 @@ onMounted(async () => {
 .user-status.active {
   background: #28a745;
   color: white;
+}
+
+.select-btn {
+  background: #007bff;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.875rem;
+}
+
+.select-btn.active {
+  background: #28a745;
 }
 
 .delete-btn {
@@ -713,6 +1011,7 @@ onMounted(async () => {
   font-weight: bold;
 }
 
+/* Config Form */
 .config-form {
   max-width: 500px;
 }
@@ -850,6 +1149,16 @@ onMounted(async () => {
   
   .status-grid {
     grid-template-columns: 1fr;
+  }
+  
+  .devices-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .user-card, .log-card, .device-item {
+    flex-direction: column;
+    gap: 1rem;
+    text-align: center;
   }
 }
 </style>
